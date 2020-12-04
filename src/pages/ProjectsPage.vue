@@ -1,42 +1,27 @@
 <template>
   <div>
-    <div class="columns is-centered">
-      <div class="column is-3">
-        <div class="columns is-centered is-multiline">
-          <div class="column is-half is-flex is-justify-content-center">
-            <b-image
-              v-bind:src="this.user.img_url"
-              alt="A random image"
-              class="image is-64x64"
-              rounded
-            ></b-image>
-          </div>
-          <div class="column is-full">
-            <h1 class="title is-5 has-text-centered">
-              {{ this.user.username }}
-            </h1>
-            <p class="subtitle is-6 has-text-centered">{{ this.user.bio }}</p>
-          </div>
-          <div class="column is-full">
-            <b-input
-              placeholder="Search..."
-              type="search"
-              icon="magnify"
-              expanded
-            >
-            </b-input>
-          </div>
-        </div>
-      </div>
-      <div class="column is-9">
-        <div class="columns is-multiline">
+    <div class="columns is-centered is-multiline">
+      <HeaderBar
+        v-if="user !== null"
+        v-bind:username="user.username"
+        v-bind:bio="user.bio"
+      />
+      <HeaderBar v-else v-bind:username="$route.path.replace('/', '')" />
+      <div class="column is-full">
+        <div
+          class="columns is-multiline"
+          v-if="projects !== null && projects.length > 0"
+        >
           <div
-            class="column is-half"
+            class="column is-one-third"
             v-for="p in projects"
             :key="p.projectName"
           >
-          <ProjectPreview v-bind:readme="p.readme"/>
+            <ProjectPreview v-bind:readme="p.readme" />
           </div>
+        </div>
+        <div class="has-text-centered" v-else>
+          <p class="subtitle">Not Found :(</p>
         </div>
       </div>
     </div>
@@ -44,69 +29,82 @@
 </template>
 
 <script>
-import ProjectPreview from '../components/Projects/ProjectsPanel/ProjectPreview'
+import ProjectPreview from "../components/Projects/ProjectPreview";
+import HeaderBar from "../components/Projects/HeaderBar";
 export default {
   name: "ProjectsPage",
-  //   props: {
-  //     username: String,
-  //   },
-  components:{
-      ProjectPreview
+  components: {
+    ProjectPreview,
+    HeaderBar,
   },
   data() {
     return {
-      loading: false,
       user: null,
       projects: null,
-      error: null,
     };
   },
   created() {
     this.fetchData();
   },
   watch: {
-    // call again the method if the route changes
     $route: "fetchData",
   },
   methods: {
     fetchData() {
       const marked = require("marked");
-      this.error = this.post = null;
-      this.loading = true;
+      this.user = this.projects = null;
+      //remove this to run the project without authorization. A stricter rate limit will be applied
+      const options = {
+        mode: "cors",
+        headers: {
+          Authorization:
+            "Basic " +
+            btoa(
+              `${process.env.VUE_APP_GITHUB_API_USERNAME}:${process.env.VUE_APP_GITHUB_API_TOKEN}`
+            ),
+        },
+      };
       Promise.all([
-        fetch("https://api.github.com/users" + this.$route.path).then((res) =>
-          res.json()
-        ),
         fetch(
-          "https://api.github.com/users" + this.$route.path + "/repos"
+          "https://api.github.com/users" + this.$route.path,
+          options
+        ).then((res) => res.json()),
+        fetch(
+          "https://api.github.com/users" + this.$route.path + "/repos",
+          options
         ).then((res) => res.json()),
       ])
         .then((data) => {
-          console.log(data);
           let user_data = data[0];
-          this.user = {
-            username: user_data.login,
-            user_id: user_data.id,
-            bio: user_data.bio,
-            img_url: user_data.avatar_url,
-            github_url: user_data.html_url,
-          };
+          if (user_data.message !== "Not Found") {
+            this.user = {
+              username: user_data.login,
+              bio: user_data.bio,
+            };
+          }
           return data[1];
         })
         .then((data) => {
-          console.log(data);
           Promise.all(
             data.map((d) =>
               fetch(
-                d.contents_url.replace("contents/{+path}", "readme")
+                d.contents_url.replace("contents/{+path}", "readme"),
+                options
               ).then((res) => res.json())
             )
           ).then((projectsData) => {
-            console.log(projectsData);
-            this.projects = projectsData.map((p) => ({
-              readme: marked(atob(p.content.slice(0, -1)), { sanitized: true }),
-            }));
-            console.log(this.projects);
+            let projects = [];
+            projectsData.map((p) => {
+              if (p.message !== "Not Found") {
+                projects.push({
+                  projectName: p.html_url.split("/")[4],
+                  readme: marked(atob(p.content.slice(0, -1)), {
+                    sanitized: true,
+                  }),
+                });
+              }
+            });
+            this.projects = projects;
           });
         });
     },
